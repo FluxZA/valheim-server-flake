@@ -172,9 +172,9 @@ in {
               -name "${cfg.serverName}" \
               -batchmode \
               -savedir "${saveDir}" \
-              ${lib.optionalString (cfg.worldName != null) "-world \"${cfg.worldName}\""} \
-              -port \"${toString cfg.port}\" \
+              -port "${toString cfg.port}" \
               -password $(cat "$CREDENTIALS_DIRECTORY/valheim-password") \
+              ${lib.optionalString (cfg.worldName != null) "-world \"${cfg.worldName}\""} \
               ${lib.optionalString cfg.crossplay "-crossplay"} \
               ${lib.optionalString (cfg.preset != null) "-preset \"${cfg.preset}\""} \
               ${lib.optionalString cfg.noGraphics "-nographics"} \
@@ -182,7 +182,7 @@ in {
           if cfg.public
           then "1"
           else "0"
-        } \
+        }
       '';
     in {
       valheim = {
