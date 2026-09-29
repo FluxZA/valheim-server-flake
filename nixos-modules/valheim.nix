@@ -13,6 +13,13 @@ in {
   options.services.valheim = {
     enable = lib.mkEnableOption (lib.mdDoc "Valheim Dedicated Server");
 
+    stateDir = lib.mkOption {
+      type = lib.types.str;
+      default = "${stateDir}";
+      example = "/var/lib/valheim";
+      description = lib.mdDoc "Absolude path to directory storing server data.";
+    };
+
     serverName = lib.mkOption {
       type = lib.types.str;
       default = "";
@@ -91,26 +98,13 @@ in {
       '';
     };
 
-    password = lib.mkOption {
-      type = with lib.types; nullOr str;
-      default = null;
+    passwordFile = lib.mkOption {
+      type = lib.types.str;
+      default = "${stateDir}/password";
       description = lib.mdDoc ''
-        The server password.
+        File containing the server password.
 
-        This is passed as a commandline argument to the server, so it
-        can be viewed by any user on the system able to list processes.
-      '';
-    };
-
-    passwordEnvFile = lib.mkOption {
-      type = with lib.types; nullOr path;
-      default = null;
-      example = "/var/lib/valheim/password.env";
-      description = lib.mdDoc ''
-        Path to a file containing the server password in env format.
-
-        Example:
-        VH_SERVER_PASSWORD='myp@$$'
+        This is passed using systemd credentials.
       '';
     };
 
@@ -156,38 +150,6 @@ in {
         These users will be banned from the server.
       '';
     };
-
-    bepinexMods = lib.mkOption {
-      type = with lib; types.listOf types.package;
-      default = [];
-      description = "BepInEx mods to install.";
-      example = lib.types.literalExpression ''
-        [
-          (pkgs.fetchValheimThunderstoreMod {
-            owner = "Somebody";
-            name = "SomeMod";
-            version = "x.y.z";
-            hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-          })
-        ]
-      '';
-    };
-
-    bepinexConfigs = lib.mkOption {
-      type = with lib; types.listOf types.path;
-      default = [];
-      description = ''
-        Config files for BepInEx mods.
-
-        The filename must be what the given mod is expecting, otherwise it will
-        not be loaded.
-      '';
-      example = lib.types.literalExpression ''
-        [
-          ./some_mod.cfg
-        ]
-      '';
-    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -197,20 +159,14 @@ in {
       users.valheim = {
         isSystemUser = true;
         group = "valheim";
-        home = stateDir;
+        home = cfg.stateDir;
         createHome = true;
       };
       groups.valheim = {};
     };
 
     systemd.services = let
-      installDir = "${stateDir}/valheim-server-modded";
-      # If passwordEnvFile is provided then use environment variable, else insert password in unit file directly.
-      # Assertions ensure that other cases are not possible.
-      serverPassword =
-        if cfg.passwordEnvFile != null
-        then "\"\${VH_SERVER_PASSWORD}\""
-        else cfg.password;
+      saveDir = "${cfg.stateDir}/saves";
     in {
       valheim = {
         description = "Valheim dedicated server";
@@ -219,120 +175,52 @@ in {
         wantedBy = ["multi-user.target"];
 
         preStart = let
-          mods = pkgs.symlinkJoin {
-            name = "valheim-bepinex-mods";
-            paths = cfg.bepinexMods;
-            postBuild = ''
-              rm -f \
-                "$out"/*.md \
-                "$out"/icon.png \
-                "$out"/manifest.json
-            '';
-          };
-          modConfigs =
-            pkgs.runCommandLocal "valheim-bepinex-configs" {
-              configs = cfg.bepinexConfigs;
-            } ''
-              mkdir "$out"
-              for cfg in $configs; do
-                cp $cfg $out/$(stripHash $cfg)
-              done
-            '';
           createListFile = name: list: ''
             echo "// List of Steam IDs for ${name} ONE per line
-            ${lib.strings.concatStringsSep "\n" list}" > ${stateDir}/.config/unity3d/IronGate/Valheim/${name}
-            chown valheim:valheim ${stateDir}/.config/unity3d/IronGate/Valheim/${name}
+            ${lib.strings.concatStringsSep "\n" list}" > ${saveDir}/${name}
+            chown valheim:valheim ${saveDir}/${name}
           '';
-        in
-          ''
-            mkdir -p ${stateDir}/.config/unity3d/IronGate/Valheim
-            ${createListFile "adminlist.txt" cfg.adminList}
-            ${createListFile "permittedlist.txt" cfg.permittedList}
-            ${createListFile "bannedlist.txt" cfg.bannedList}
-          ''
-          + lib.optionalString (cfg.bepinexMods != []) ''
-            if [ -e ${installDir} ]; then
-              chmod -R +w ${installDir}
-              rm -rf ${installDir}
-            fi
-            mkdir ${installDir}
-            cp -r \
-              ${pkgs.valheim-server-unwrapped}/* \
-              ${pkgs.valheim-bepinex-pack}/* \
-              ${installDir}
+        in ''
+          mkdir -p ${saveDir}
+          ${createListFile "adminlist.txt" cfg.adminList}
+          ${createListFile "permittedlist.txt" cfg.permittedList}
+          ${createListFile "bannedlist.txt" cfg.bannedList}
+        '';
 
-            # BepInEx doesn't like read-only files.
-            chmod -R u+w ${installDir}
-          ''
-          + lib.optionalString (cfg.bepinexMods != []) ''
-            # Install extra mods.
-            cp -rL "${mods}"/. ${installDir}/BepInEx/plugins/
-
-            # BepInEx *really* doesn't like *any* read-only files.
-            chmod -R u+w ${installDir}/BepInEx/plugins/
-          ''
-          + lib.optionalString (cfg.bepinexConfigs != []) ''
-            # Install extra mod configs.
-            cp -r ${modConfigs}/. ${installDir}/BepInEx/config/
-
-            # BepInEx *really* doesn't like *any* read-only files.
-            chmod -R u+w ${installDir}/BepInEx/config/
-          '';
-
-        serviceConfig = let
-          valheimBepInExFHSEnvWrapper = pkgs.buildFHSEnv {
-            name = "valheim-server";
-            runScript = pkgs.writeScript "valheim-server-bepinex-wrapper" ''
-              # Whether or not to enable Doorstop. Valid values: TRUE or FALSE
-              export DOORSTOP_ENABLED=1
-
-              # What .NET assembly to execute. Valid value is a path to a .NET DLL that mono can execute.
-              export DOORSTOP_TARGET_ASSEMBLY="${installDir}/BepInEx/core/BepInEx.Preloader.dll"
-
-              export LD_LIBRARY_PATH=${installDir}/doorstop_libs:$LD_LIBRARY_PATH
-              export LD_PRELOAD="libdoorstop_x64.so"
-
-              export LD_LIBRARY_PATH=${pkgs.steamworks-sdk-redist}/lib:$LD_LIBRARY_PATH
-              export SteamAppId=892970
-
-              exec ${installDir}/valheim_server.x86_64 "$@"
-            '';
-
-            targetPkgs = with pkgs;
-              pkgs: [
-                pkgs.steamworks-sdk-redist
-                zlib
-                pulseaudio
-              ];
-          };
-        in {
+        serviceConfig = {
           Type = "exec";
           User = "valheim";
-          EnvironmentFile = lib.mkIf (cfg.passwordEnvFile != null) cfg.passwordEnvFile;
-          ExecStart = let
-            valheimServerPkg =
-              if (cfg.bepinexMods != [])
-              then valheimBepInExFHSEnvWrapper
-              else pkgs.valheim-server;
-          in
-            lib.strings.concatStringsSep " " ([
-                "${valheimServerPkg}/bin/valheim-server"
-                "-name \"${cfg.serverName}\""
-                "-batchmode"
-              ]
-              ++ (lib.lists.optional (cfg.worldName != null) "-world \"${cfg.worldName}\"")
-              ++ [
-                "-port \"${builtins.toString cfg.port}\""
-                "-password ${serverPassword}"
-                "-public ${
-                  if cfg.public
-                  then "1"
-                  else "0"
-                }"
-              ]
-              ++ (lib.lists.optional cfg.crossplay "-crossplay")
-              ++ (lib.lists.optional (cfg.preset != null) "-preset \"${cfg.preset}\"")
-              ++ (lib.lists.optional cfg.noGraphics "-nographics"));
+          ExecStart = lib.strings.concatStringsSep " " ([
+              "${pkgs.valheim-server}/bin/valheim-server"
+              "-name \"${cfg.serverName}\""
+              "-batchmode"
+              "-savedir \"${saveDir}\""
+            ]
+            ++ (lib.lists.optional (cfg.worldName != null) "-world \"${cfg.worldName}\"")
+            ++ [
+              "-port \"${toString cfg.port}\""
+              "-password $(cat \"$CREDENTIALS_DIRECTORY/valheim-password\")"
+              "-public ${
+                if cfg.public
+                then "1"
+                else "0"
+              }"
+            ]
+            ++ (lib.lists.optional cfg.crossplay "-crossplay")
+            ++ (lib.lists.optional (cfg.preset != null) "-preset \"${cfg.preset}\"")
+            ++ (lib.lists.optional cfg.noGraphics "-nographics"));
+          # Hardening
+          NoNewPrivileges = true;
+          PrivateTmp = true;
+          ProtectSystem = "strict";
+          ProtectHome = true;
+          ReadOnlyPaths = ["/"];
+          ReadWritePaths = [
+            "${cfg.stateDir}"
+            "/tmp"
+            "/var/tmp"
+          ];
+          LoadCredential = "valheim-password:${cfg.passwordFile}";
         };
       };
     };
@@ -352,10 +240,6 @@ in {
       {
         assertion = cfg.worldName != "";
         message = "The world name must not be empty.";
-      }
-      {
-        assertion = (cfg.password != null && cfg.password != "") != (cfg.passwordEnvFile != null);
-        message = "Please provide either password or passwordEnvFile but not both";
       }
     ];
   };
