@@ -167,6 +167,23 @@ in {
 
     systemd.services = let
       saveDir = "${cfg.stateDir}/saves";
+      startScript = pkgs.writeShellScriptBin "valheim-start" ''
+        exec ${pkgs.valheim-server}/bin/valheim-server \
+              -name "${cfg.serverName}" \
+              -batchmode \
+              -savedir "${saveDir}" \
+              ${lib.optionalString (cfg.worldName != null) "-world \"${cfg.worldName}\""} \
+              -port \"${toString cfg.port}\" \
+              -password $(cat "$CREDENTIALS_DIRECTORY/valheim-password") \
+              ${lib.optionalString cfg.crossplay "-crossplay"} \
+              ${lib.optionalString (cfg.preset != null) "-preset \"${cfg.preset}\""} \
+              ${lib.optionalString cfg.noGraphics "-nographics"} \
+              -public ${
+          if cfg.public
+          then "1"
+          else "0"
+        } \
+      '';
     in {
       valheim = {
         description = "Valheim dedicated server";
@@ -190,25 +207,7 @@ in {
         serviceConfig = {
           Type = "exec";
           User = "valheim";
-          ExecStart = lib.strings.concatStringsSep " " ([
-              "${pkgs.valheim-server}/bin/valheim-server"
-              "-name \"${cfg.serverName}\""
-              "-batchmode"
-              "-savedir \"${saveDir}\""
-            ]
-            ++ (lib.lists.optional (cfg.worldName != null) "-world \"${cfg.worldName}\"")
-            ++ [
-              "-port \"${toString cfg.port}\""
-              "-password \"$(cat \"$CREDENTIALS_DIRECTORY/valheim-password\")\""
-              "-public ${
-                if cfg.public
-                then "1"
-                else "0"
-              }"
-            ]
-            ++ (lib.lists.optional cfg.crossplay "-crossplay")
-            ++ (lib.lists.optional (cfg.preset != null) "-preset \"${cfg.preset}\"")
-            ++ (lib.lists.optional cfg.noGraphics "-nographics"));
+          ExecStart = "${startScript}/bin/valheim-start";
           # Hardening
           NoNewPrivileges = true;
           PrivateTmp = true;
