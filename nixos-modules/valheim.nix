@@ -199,7 +199,7 @@ in {
             ++ (lib.lists.optional (cfg.worldName != null) "-world \"${cfg.worldName}\"")
             ++ [
               "-port \"${toString cfg.port}\""
-              "-password $(cat \"$CREDENTIALS_DIRECTORY/valheim-password\")"
+              "-password \"$(cat \"$CREDENTIALS_DIRECTORY/valheim-password\")\""
               "-public ${
                 if cfg.public
                 then "1"
