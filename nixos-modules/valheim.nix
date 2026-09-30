@@ -168,6 +168,12 @@ in {
       default = "43200";
       description = lib.mdDoc ''Duration in seconds between auto backups (ignoring the first).'';
     };
+
+    saveInterval = lib.mkOption {
+      type = lib.types.str;
+      default = "1800";
+      description = lib.mdDoc ''Duration in seconds between saves.'';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -195,6 +201,7 @@ in {
               -backups "${toString cfg.numberBackups}" \
               -backupshort "${toString cfg.backupShortDuration}" \
               -backuplong "${toString cfg.backupLongDuration}" \
+              -saveinterval "${toString cfg.saveInterval}" \
               ${lib.optionalString (cfg.worldName != null) "-world \"${cfg.worldName}\""} \
               ${lib.optionalString cfg.crossplay "-crossplay"} \
               ${lib.optionalString (cfg.preset != null) "-preset \"${cfg.preset}\""} \
