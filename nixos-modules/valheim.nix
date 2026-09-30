@@ -150,6 +150,24 @@ in {
         These users will be banned from the server.
       '';
     };
+
+    numberBackups = lib.mkOption {
+      type = lib.types.str;
+      default = "4";
+      description = lib.mdDoc ''Number of auto backups to keep. One uses shortDuration, the rest use longDuration.'';
+    };
+
+    backupShortDuration = lib.mkOption {
+      type = lib.types.str;
+      default = "7200";
+      description = lib.mdDoc ''Duration in seconds after which the first auto backup is made.'';
+    };
+
+    backupLongDuration = lib.mkOption {
+      type = lib.types.str;
+      default = "43200";
+      description = lib.mdDoc ''Duration in seconds between auto backups (ignoring the first).'';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -174,6 +192,9 @@ in {
               -savedir "${saveDir}" \
               -port "${toString cfg.port}" \
               -password $(cat "$CREDENTIALS_DIRECTORY/valheim-password") \
+              -backups "${toString cfg.numberBackups}" \
+              -backupshort "${toString cfg.backupShortDuration}" \
+              -backuplong "${toString cfg.backupLongDuration}" \
               ${lib.optionalString (cfg.worldName != null) "-world \"${cfg.worldName}\""} \
               ${lib.optionalString cfg.crossplay "-crossplay"} \
               ${lib.optionalString (cfg.preset != null) "-preset \"${cfg.preset}\""} \
